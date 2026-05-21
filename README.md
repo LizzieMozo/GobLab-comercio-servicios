@@ -1,0 +1,1 @@
+Este archivo fue generado a partir de un script de R desarrollado por el equipo investigador. El código descarga automáticamente los datos del Banco Mundial mediante el paquete WDI (Arel-Bundock, 2022), calcula el Índice de Balanza Comercial Relativa (IBCR) por sector y construye el índice multicriterio con los pesos documentados en esta hoja.
