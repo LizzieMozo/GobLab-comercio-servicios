@@ -1,0 +1,589 @@
+---
+title: "Indices_COL_TUR"
+output: html_document
+date: "2026-04-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+# ============================================================
+#  Indicadores de comercio bilateral Colombia – Türkiye
+#  VCR · BCR · GL · Krugman
+#
+#  ARCHIVOS REQUERIDOS (los 3 que ya tienes):
+#
+#  archivo_1:  Trade_Map_-_Comercio_actual_y_potencial_entre_Türkiye_y_Colombia_(3).xls
+#              Columnas: Tür→Col | Col_imp_mundo | Tür_exp_mundo
+#
+#  archivo_2:  Trade_Map_-_Comercio_actual_y_potencial_entre_Colombia_y_Türkiye_(2).xls
+#              Columnas: Col→Tür | Tür_imp_mundo | Col_exp_mundo
+#
+#  archivo_3:  Trade_Map_-_Lista_de_los_productos_exportados_para_el_producto_seleccionado.xls
+#              Columnas: Xw_i (2021/2022/2023/2024)
+# ============================================================
+
+# Instalación de paquetes
+```{r}
+install.packages("readxl")
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("stringr")
+install.packages("writexl")
+```
+
+
+```{r}
+getwd()
+```
+
+## Análisis de Servicios
+
+```{r}
+# ============================================================
+# ÍNDICE DE VIABILIDAD DE SERVICIOS COLOMBIA - TÜRKIYE
+# Metodología: BCR + Análisis Multicriterio
+# Fuente: Banco Mundial (WDI) via paquete WDI
+# ============================================================
+
+# ── PASO 1: Instalar y cargar paquetes ───────────────────────
+# Solo necesitas correr install.packages una vez
+
+install.packages(c("WDI", "dplyr", "tidyr", "ggplot2", "writexl"))
+
+
+
+library(WDI)      # Descarga datos del Banco Mundial automáticamente
+library(dplyr)    # Manipulación de datos
+library(tidyr)    # Reorganizar tablas
+library(ggplot2)  # Gráficos profesionales
+library(writexl)  # Exportar a Excel
+```
+
+
+```{r}
+class(raw)
+head(raw)
+```
+
+
+
+```{r}
+# ── PASO 2: Definir indicadores a descargar ──────────────────
+# Estos son los códigos oficiales del Banco Mundial
+# Cada uno mide una dimensión distinta del comercio de servicios
+datos_wdi <- WDI(
+  country   = c("COL", "TUR"),
+  indicator = c(
+    "TX.VAL.SERV.CD.WT",
+    "TM.VAL.SERV.CD.WT",
+    "TX.VAL.TRAN.ZS.WT",
+    "TM.VAL.TRAN.ZS.WT",
+    "TX.VAL.TRVL.ZS.WT",
+    "TM.VAL.TRVL.ZS.WT",
+    "TX.VAL.OTHR.ZS.WT",
+    "TM.VAL.OTHR.ZS.WT"
+  ),
+  start = 2019,
+  end   = 2023,
+  extra = FALSE
+)
+
+class(datos_wdi)
+nrow(datos_wdi)
+
+```
+
+```{r}
+
+# ── PASO 3: Descargar datos automáticamente ──────────────────
+cat("Descargando datos del Banco Mundial...\n")
+
+datos_raw <- WDI(
+  country   = c("COL", "TUR"), # Colombia y Türkiye
+  indicator = indicadores,      # Los 8 indicadores definidos arriba
+  start     = 2019,             # Año inicial
+  end       = 2023,             # Año final
+  extra     = FALSE             # No descargar variables adicionales
+)
+
+cat(sprintf("Datos descargados: %d filas\n", nrow(datos_raw)))
+```
+
+```{r}
+# ── PASO 4: Verificar que la descarga fue exitosa ────────────
+cat("\nPrimeras filas de los datos descargados:\n")
+head(datos_raw) |> as.data.frame() |> print()
+```
+
+```{r}
+# ── PASO 5: Renombrar columnas para facilitar el trabajo ─────
+# Los nombres originales del Banco Mundial son largos y difíciles
+anios <- 2019:2023
+
+datos <- datos_wdi |>
+  dplyr::rename(
+    pais         = country,
+    anio         = year,
+    X_total      = TX.VAL.SERV.CD.WT,
+    M_total      = TM.VAL.SERV.CD.WT,
+    pct_X_transp = TX.VAL.TRAN.ZS.WT,
+    pct_M_transp = TM.VAL.TRAN.ZS.WT,
+    pct_X_viajes = TX.VAL.TRVL.ZS.WT,
+    pct_M_viajes = TM.VAL.TRVL.ZS.WT,
+    pct_X_otros  = TX.VAL.OTHR.ZS.WT,
+    pct_M_otros  = TM.VAL.OTHR.ZS.WT
+  ) |>
+  dplyr::filter(anio %in% anios) |>
+  dplyr::mutate(pais = case_when(
+    iso2c == "CO" ~ "Colombia",
+    iso2c == "TR" ~ "Turkiye",
+    TRUE          ~ pais
+  )) |>
+  dplyr::select(pais, anio, X_total, M_total,
+                pct_X_transp, pct_M_transp,
+                pct_X_viajes, pct_M_viajes,
+                pct_X_otros,  pct_M_otros)
+
+# Verificar
+nrow(datos)
+head(datos)
+```
+
+
+
+
+```{r}
+# ── PASO 6: Calcular valores en USD por sector ───────────────
+# Fórmula: USD_sector = Total_USD * (% / 100)
+# Esta es una estimación porque los % vienen del mismo total
+# Limitación: los 3 sectores pueden no sumar exactamente 100%
+# X_ks = X_total_k × (%_s / 100)
+# Nota: X_total viene en millones USD desde WDI
+# Referencia: Durán Lima y Alvarez (2008), CEPAL LC/W.217
+datos <- datos |>
+  mutate(
+    X_transporte = X_total * (pct_X_transp / 100),
+    M_transporte = M_total * (pct_M_transp / 100),
+    X_viajes     = X_total * (pct_X_viajes / 100),
+    M_viajes     = M_total * (pct_M_viajes / 100),
+    X_otros      = X_total * (pct_X_otros  / 100),
+    M_otros      = M_total * (pct_M_otros  / 100)
+  )
+```
+
+
+
+```{r}
+# ── PASO 7: Verificar que los porcentajes suman ~100% ────────
+# Esta verificación detecta doble conteo o datos faltantes
+cat("=== COBERTURA SECTORIAL 2023 (suma % sectores) ===\n")
+datos |>
+  filter(anio == 2023) |>
+  mutate(
+    cob_X = pct_X_transp + pct_X_viajes + pct_X_otros,
+    cob_M = pct_M_transp + pct_M_viajes + pct_M_otros
+  ) |>
+  select(pais, cob_X, cob_M) |>
+  print()
+cat("Nota: diferencia hasta 100% corresponde a servicios gubernamentales\n",
+    "y categorías residuales no desagregadas (Banco Mundial, 2024)\n\n")
+```
+
+```{r}
+# ── PASO 7: Calcular crecimiento exportaciones 2019-2023 ─────
+base_2019 <- datos |>
+  filter(anio == 2019) |>
+  select(pais, X_transporte, X_viajes, X_otros) |>
+  rename(X_transp_19 = X_transporte,
+         X_viajes_19 = X_viajes,
+         X_otros_19  = X_otros)
+ 
+datos <- datos |>
+  left_join(base_2019, by = "pais") |>
+  mutate(
+    crec_transp = ((X_transporte - X_transp_19) / X_transp_19) * 100,
+    crec_viajes = ((X_viajes     - X_viajes_19) / X_viajes_19) * 100,
+    crec_otros  = ((X_otros      - X_otros_19)  / X_otros_19)  * 100
+  )
+```
+
+
+
+
+
+```{r}
+# ── PASO 8: Calcular IBCR por sector ────────────────────────
+# IBCR_ks = (X_ks - M_ks) / (X_ks + M_ks)
+# Donde:
+#   k = país (Colombia o Turkiye)
+#   s = sector (transporte, viajes u otros)
+#   X_ks = exportaciones del país k en sector s frente al mundo
+#   M_ks = importaciones del país k en sector s frente al mundo
+# Rango: [-1, +1]
+#   +1 = exportador neto puro
+#   -1 = importador neto puro
+#    0 = equilibrio perfecto
+# Fuente: Durán Lima y Alvarez (2008), CEPAL LC/W.217
+ibcr <- function(X, M) {
+  ifelse((X + M) == 0 | is.na(X) | is.na(M),
+         NA_real_,
+         (X - M) / (X + M))
+}
+ 
+datos <- datos |>
+  mutate(
+    IBCR_transporte = round(ibcr(X_transporte, M_transporte), 4),
+    IBCR_viajes     = round(ibcr(X_viajes,     M_viajes),     4),
+    IBCR_otros      = round(ibcr(X_otros,       M_otros),      4)
+  )
+```
+
+
+
+```{r}
+# ── PASO 9: Mostrar resultados IBCR 2023 ─────────────────────
+cat("=== IBCR POR SECTOR — AÑO 2023 ===\n")
+datos |>
+  filter(anio == 2023) |>
+  select(pais, IBCR_transporte, IBCR_viajes, IBCR_otros) |>
+  print()
+cat("\n")
+ 
+cat("=== CRECIMIENTO EXPORTACIONES 2019-2023 (%) ===\n")
+datos |>
+  filter(anio == 2023) |>
+  select(pais, crec_transp, crec_viajes, crec_otros) |>
+  mutate(across(starts_with("crec"), ~round(., 2))) |>
+  print()
+cat("\n")
+```
+
+
+
+
+```{r}
+# ── PASO 10: Datos de 2023 para el multicriterio ─────────────
+datos_2023 <- datos |> filter(anio == 2023)
+```
+
+
+
+
+```{r}
+# ── PASO 11: Criterio C5 — Percepción de actores institucionales
+# Fuente: Entrevistas primarias a actores turcos en Colombia
+# realizadas en el marco del proyecto GobLab 2025.
+#
+# Calificación (escala 1-5, igual para Colombia y Türkiye
+# porque el criterio mide el potencial bilateral del sector):
+#
+#   Viajes/Turismo = 4
+#     Evidencia: vuelo diario Istanbul-Bogotá desde 2022 (Dr. Elgün,
+#     Fundación Maarif); migración educativa activa; 160 estudiantes
+#     de turco en U. Nacional. Sector con mayor madurez bilateral.
+#
+#   Transporte = 3
+#     Evidencia: empresas turcas buscando distribuidores activamente
+#     en Colombia (Sinan, Anadolu Agency); sector construcción y
+#     energía con negociaciones en curso. Barrera principal:
+#     doble tributación (APPRI firmado pero no ratificado).
+#
+#   Otros servicios = 2
+#     Evidencia: interés turco en café colombiano bloqueado por
+#     precio e inflación (Sinan); educación emergente pero incipiente;
+#     sin acuerdos de reconocimiento profesional bilateral.
+ 
+percepcion_tbl <- data.frame(
+  Sector     = c("Transporte", "Viajes", "Otros"),
+  C5_actores = c(3, 4, 2),
+  Evidencia  = c(
+    "Empresas turcas buscando distribuidores; construcción/energía en negociación (Sinan). Barrera: doble tributación.",
+    "Vuelo diario Istanbul-Bogotá desde 2022; migración educativa; 160 estudiantes de turco en U. Nacional (Dr. Elgün).",
+    "Interés en café colombiano bloqueado por precio; educación incipiente; sin reconocimiento profesional (Sinan)."
+  ),
+  stringsAsFactors = FALSE
+)
+ 
+cat("=== C5: PERCEPCIÓN DE ACTORES INSTITUCIONALES (entrevistas) ===\n")
+print(percepcion_tbl[, c("Sector", "C5_actores", "Evidencia")])
+cat("\n")
+
+```
+
+
+
+```{r}
+# ── PASO 12: Funciones de calificación (escala 1-5) ──────────
+# Umbrales definidos a priori antes del análisis.
+# Normalización en escala 1-5: Baena-Rojas et al. (2022), RAM 23(2)
+ 
+# C1: IBCR — posición neta
+calif_ibcr <- function(ibcr_val) {
+  case_when(
+    ibcr_val >  0.5  ~ 5,  # Exportador neto fuerte
+    ibcr_val >  0.2  ~ 4,  # Exportador neto moderado
+    ibcr_val >  0.0  ~ 3,  # Exportador neto leve
+    ibcr_val > -0.2  ~ 2,  # Importador neto leve
+    TRUE             ~ 1   # Importador neto significativo
+  )
+}
+ 
+# C2: Volumen exportado (relativo al sector máximo del mismo país)
+calif_volumen <- function(x_usd, max_val) {
+  pct <- x_usd / max_val
+  case_when(
+    pct >= 0.80 ~ 5,
+    pct >= 0.50 ~ 4,
+    pct >= 0.30 ~ 3,
+    pct >= 0.15 ~ 2,
+    TRUE        ~ 1
+  )
+}
+ 
+# C3: Crecimiento exportaciones 2019-2023
+calif_crec <- function(crec_val) {
+  case_when(
+    crec_val >  50 ~ 5,  # Crecimiento muy alto
+    crec_val >  20 ~ 4,  # Crecimiento alto
+    crec_val >   0 ~ 3,  # Crecimiento positivo
+    crec_val > -20 ~ 2,  # Caída leve
+    TRUE           ~ 1   # Caída significativa
+  )
+}
+ 
+# C4: Complementariedad bilateral
+# Diferencia absoluta entre IBCR Colombia e IBCR Türkiye
+# Mayor diferencia = posiciones más opuestas = mayor complementariedad
+calif_complement <- function(ibcr_col, ibcr_tur) {
+  dif <- abs(ibcr_col - ibcr_tur)
+  case_when(
+    dif > 0.8 ~ 5,
+    dif > 0.5 ~ 4,
+    dif > 0.3 ~ 3,
+    dif > 0.1 ~ 2,
+    TRUE      ~ 1
+  )
+}
+```
+
+
+
+
+```{r}
+# ── PASO 13: Calcular puntajes multicriterio ─────────────────
+# Pesos:
+#   C1 IBCR             25% — criterio cuantitativo más directo;
+#                              equivalente al VCR en módulo de bienes
+#   C2 Volumen          20% — masa crítica observable en datos
+#   C3 Crecimiento      20% — dinamismo temporal cuantitativo
+#   C4 Complementar.    20% — derivado del IBCR, cuantitativo-contextual
+#   C5 Actores inst.    15% — único criterio cualitativo (fuente primaria)
+#
+# Justificación: AHP de Saaty y Vargas (2012) — criterios objetivos
+# pesan más que los subjetivos. Consistente con módulos de bienes e IED.
+ 
+sectores <- c("Transporte", "Viajes", "Otros")
+ibcr_col <- datos_2023 |> filter(pais == "Colombia")
+ibcr_tur <- datos_2023 |> filter(pais == "Turkiye")
+resultado_mc <- data.frame()
+ 
+for (p in c("Colombia", "Turkiye")) {
+  fila_p <- datos_2023 |> filter(pais == p)
+  if (nrow(fila_p) == 0) next
+ 
+  max_X <- max(c(fila_p$X_transporte, fila_p$X_viajes, fila_p$X_otros),
+               na.rm = TRUE)
+ 
+  for (s in sectores) {
+    X_s    <- if(s=="Transporte") fila_p$X_transporte else
+               if(s=="Viajes")   fila_p$X_viajes     else fila_p$X_otros
+    M_s    <- if(s=="Transporte") fila_p$M_transporte else
+               if(s=="Viajes")   fila_p$M_viajes     else fila_p$M_otros
+    ibcr_s <- if(s=="Transporte") fila_p$IBCR_transporte else
+               if(s=="Viajes")   fila_p$IBCR_viajes     else fila_p$IBCR_otros
+    crec_s <- if(s=="Transporte") fila_p$crec_transp else
+               if(s=="Viajes")   fila_p$crec_viajes  else fila_p$crec_otros
+ 
+    ibcr_col_s <- if(s=="Transporte") ibcr_col$IBCR_transporte else
+                   if(s=="Viajes")   ibcr_col$IBCR_viajes     else ibcr_col$IBCR_otros
+    ibcr_tur_s <- if(s=="Transporte") ibcr_tur$IBCR_transporte else
+                   if(s=="Viajes")   ibcr_tur$IBCR_viajes     else ibcr_tur$IBCR_otros
+ 
+    c5 <- percepcion_tbl |> filter(Sector == s) |> pull(C5_actores)
+ 
+    c1 <- calif_ibcr(ibcr_s)
+    c2 <- calif_volumen(X_s, max_X)
+    c3 <- calif_crec(crec_s)
+    c4 <- calif_complement(ibcr_col_s, ibcr_tur_s)
+ 
+    # Puntaje: C1×0.25 + C2×0.20 + C3×0.20 + C4×0.20 + C5×0.15
+    puntaje <- round(c1*0.25 + c2*0.20 + c3*0.20 + c4*0.20 + c5*0.15, 2)
+ 
+    resultado_mc <- rbind(resultado_mc, data.frame(
+      Pais                = p,
+      Sector              = s,
+      X_millones_USD      = round(X_s, 0),
+      M_millones_USD      = round(M_s, 0),
+      IBCR                = ibcr_s,
+      Crecimiento_pct     = round(crec_s, 2),
+      C1_IBCR_25pct       = c1,
+      C2_Volumen_20pct    = c2,
+      C3_Crec_20pct       = c3,
+      C4_Complement_20pct = c4,
+      C5_Actores_15pct    = c5,
+      Puntaje_final       = puntaje,
+      stringsAsFactors    = FALSE
+    ))
+  }
+}
+```
+
+
+
+
+```{r}
+# ── PASO 14: Mostrar resultados ──────────────────────────────
+cat("=== RESULTADOS MULTICRITERIO ===\n")
+cat("Pesos: IBCR 25% | Volumen 20% | Crecimiento 20% |",
+    "Complementariedad 20% | Actores inst. 15%\n\n")
+resultado_mc_ord <- resultado_mc |> arrange(desc(Puntaje_final))
+print(resultado_mc_ord)
+cat("\n")
+ 
+cat("=== RANKING FINAL ===\n")
+resultado_mc_ord |>
+  mutate(Rank = row_number(),
+         Descripcion = paste(Pais, "-", Sector)) |>
+  select(Rank, Descripcion, Puntaje_final,
+         C1_IBCR_25pct, C2_Volumen_20pct,
+         C3_Crec_20pct, C4_Complement_20pct, C5_Actores_15pct) |>
+  print()
+cat("\n")
+```
+
+
+
+```{r}
+# ── PASO 15: Verificación manual de puntajes ─────────────────
+cat("=== VERIFICACIÓN MANUAL ===\n")
+for (i in 1:nrow(resultado_mc_ord)) {
+  r <- resultado_mc_ord[i, ]
+  check <- r$C1_IBCR_25pct * 0.25 +
+           r$C2_Volumen_20pct * 0.20 +
+           r$C3_Crec_20pct * 0.20 +
+           r$C4_Complement_20pct * 0.20 +
+           r$C5_Actores_15pct * 0.15
+  cat(sprintf("%s - %s: declarado %.2f | calculado %.2f %s\n",
+              r$Pais, r$Sector, r$Puntaje_final, round(check, 2),
+              ifelse(abs(r$Puntaje_final - round(check, 2)) < 0.01, "✓", "ERROR")))
+}
+cat("\n")
+```
+
+
+
+```{r}
+# ── PASO 16: Gráfico 1 — IBCR comparativo ───────────────────
+datos_grafico_ibcr <- datos |>
+  filter(anio == 2023) |>
+  select(pais, IBCR_transporte, IBCR_viajes, IBCR_otros) |>
+  pivot_longer(cols = starts_with("IBCR_"),
+               names_to = "sector",
+               values_to = "IBCR") |>
+  mutate(sector = case_when(
+    sector == "IBCR_transporte" ~ "Transporte",
+    sector == "IBCR_viajes"     ~ "Viajes/Turismo",
+    sector == "IBCR_otros"      ~ "Otros servicios"
+  ))
+ 
+p1 <- ggplot(datos_grafico_ibcr, aes(x = sector, y = IBCR, fill = pais)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  scale_fill_manual(values = c("Colombia" = "#1D9E75",
+                               "Turkiye"  = "#D85A30")) +
+  labs(
+    title    = "Índice de Balanza Comercial Relativa (IBCR) de Servicios — 2023",
+    subtitle = "Colombia vs Türkiye | Fuente: Banco Mundial WDI | Durán Lima y Alvarez (2008)",
+    x        = "Sector de servicios",
+    y        = "IBCR (–1 = importador neto | +1 = exportador neto)",
+    fill     = "País"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+ 
+ggsave("IBCR_servicios_2023.png", plot = p1, width = 10, height = 6, dpi = 150)
+cat("Gráfico guardado: IBCR_servicios_2023.png\n")
+```
+
+
+
+```{r}
+# ── PASO 17: Gráfico 2 — Índice multicriterio ───────────────
+p2 <- ggplot(resultado_mc,
+             aes(x = reorder(paste(Pais, "-", Sector), Puntaje_final),
+                 y = Puntaje_final,
+                 fill = Pais)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = Puntaje_final),
+            hjust = -0.2, size = 4, fontface = "bold") +
+  coord_flip() +
+  scale_fill_manual(values = c("Colombia" = "#1D9E75",
+                               "Turkiye"  = "#D85A30")) +
+  scale_y_continuous(limits = c(0, 5.5)) +
+  labs(
+    title    = "Índice Multicriterio de Viabilidad de Servicios",
+    subtitle = "IBCR 25% | Volumen 20% | Crecimiento 20% | Complementariedad 20% | Actores inst. 15%",
+    x        = NULL,
+    y        = "Puntaje (1 = mínimo | 5 = máximo)",
+    fill     = "País"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+ 
+ggsave("Multicriterio_servicios.png", plot = p2, width = 12, height = 6, dpi = 150)
+cat("Gráfico guardado: Multicriterio_servicios.png\n")
+```
+
+
+
+```{r}
+# ── PASO 18: Exportar a Excel ────────────────────────────────
+write_xlsx(list(
+  "Datos_completos"  = datos |> as.data.frame(),
+  "IBCR_2023"        = datos |>
+                       filter(anio == 2023) |>
+                       select(pais, anio,
+                              IBCR_transporte, IBCR_viajes, IBCR_otros,
+                              crec_transp, crec_viajes, crec_otros) |>
+                       as.data.frame(),
+  "Multicriterio"    = resultado_mc_ord,
+  "C5_Entrevistas"   = percepcion_tbl
+), "servicios_WDI_Col_Tur.xlsx")
+ 
+cat("\nArchivo guardado: servicios_WDI_Col_Tur.xlsx\n")
+cat("Hojas: Datos_completos | IBCR_2023 | Multicriterio | C5_Entrevistas\n\n")
+cat("=== FIN DEL ANÁLISIS ===\n")
+```
+
+
+
+```{r}
+unique(datos$pais)
+```
+
